@@ -42,13 +42,13 @@ export default function App() {
   });
 
   const [tone, setTone] = useState("Balanced");
+  const [toneStrength, setToneStrength] = useState(0);
+
   const [result, setResult] = useState("");
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [aiOnline, setAiOnline] = useState(false);
-
-  // NEW: Stores previous rewrites
   const [history, setHistory] = useState([]);
 
   const toneFieldRef = useRef(null);
@@ -64,7 +64,7 @@ export default function App() {
 
       const data = await response.json();
       setAiOnline(data.ai === "online");
-    } catch (error) {
+    } catch {
       setAiOnline(false);
     }
   }
@@ -72,24 +72,74 @@ export default function App() {
   useEffect(() => {
     checkAIStatus();
 
-    const interval = setInterval(() => {
-      checkAIStatus();
-    }, 5000);
+    const interval = setInterval(checkAIStatus, 5000);
 
     return () => clearInterval(interval);
   }, []);
 
   function getToneFromPosition(x, y) {
-    const centerDistance = Math.sqrt(
+    const distance = Math.sqrt(
       Math.pow(x - 50, 2) + Math.pow(y - 50, 2)
     );
 
-    if (centerDistance < 16) return "Balanced";
-    if (y < 38) return "Professional";
-    if (x < 38) return "Casual";
-    if (x > 62) return "Direct";
+    // Maximum meaningful distance from center ≈ 64
+    const strength = Math.min(
+      100,
+      Math.round((distance / 64) * 100)
+    );
 
-    return "Warm";
+    if (distance < 16) {
+      return {
+        tone: "Balanced",
+        strength: Math.round((distance / 16) * 20),
+      };
+    }
+
+    // Determine which direction dominates
+    const topDistance = 50 - y;
+    const leftDistance = 50 - x;
+    const rightDistance = x - 50;
+    const bottomDistance = y - 50;
+
+    const largestDirection = Math.max(
+      topDistance,
+      leftDistance,
+      rightDistance,
+      bottomDistance
+    );
+
+    if (largestDirection === topDistance) {
+      return {
+        tone: "Professional",
+        strength,
+      };
+    }
+
+    if (largestDirection === leftDistance) {
+      return {
+        tone: "Casual",
+        strength,
+      };
+    }
+
+    if (largestDirection === rightDistance) {
+      return {
+        tone: "Direct",
+        strength,
+      };
+    }
+
+    return {
+      tone: "Warm",
+      strength,
+    };
+  }
+
+  function getStrengthLabel() {
+    if (toneStrength < 20) return "SUBTLE";
+    if (toneStrength < 45) return "LIGHT";
+    if (toneStrength < 70) return "STRONG";
+    return "INTENSE";
   }
 
   function updateTonePosition(event) {
@@ -105,8 +155,11 @@ export default function App() {
     x = Math.max(5, Math.min(95, x));
     y = Math.max(5, Math.min(95, y));
 
+    const toneResult = getToneFromPosition(x, y);
+
     setPoint({ x, y });
-    setTone(getToneFromPosition(x, y));
+    setTone(toneResult.tone);
+    setToneStrength(toneResult.strength);
   }
 
   function handlePointerDown(event) {
@@ -135,7 +188,9 @@ export default function App() {
     const text = message.trim();
 
     if (!text) {
-      setResult("Write something first, then shape the tone that feels right.");
+      setResult(
+        "Write something first, then shape the tone that feels right."
+      );
       return;
     }
 
@@ -144,16 +199,20 @@ export default function App() {
     setResult("");
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/rewrite", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: text,
-          tone: tone,
-        }),
-      });
+      const response = await fetch(
+        "http://127.0.0.1:8000/rewrite",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: text,
+            tone,
+            strength: toneStrength,
+          }),
+        }
+      );
 
       if (!response.ok) {
         throw new Error("Failed to rewrite message");
@@ -164,11 +223,11 @@ export default function App() {
       setResult(data.result);
       setAiOnline(true);
 
-      // NEW: Save successful rewrite to history
       const newHistoryItem = {
         id: Date.now(),
         original: text,
-        tone: tone,
+        tone,
+        strength: toneStrength,
         result: data.result,
       };
 
@@ -176,7 +235,6 @@ export default function App() {
         newHistoryItem,
         ...previousHistory,
       ]);
-
     } catch (error) {
       console.error(error);
 
@@ -206,15 +264,14 @@ export default function App() {
     }
   }
 
-  // NEW: Clear all history
   function clearHistory() {
     setHistory([]);
   }
 
-  // NEW: Load an old result back into the output
   function loadHistoryItem(item) {
     setMessage(item.original);
     setTone(item.tone);
+    setToneStrength(item.strength || 0);
     setResult(item.result);
     setCopied(false);
   }
@@ -260,7 +317,6 @@ export default function App() {
       </header>
 
       <main className="workspace">
-
         <aside className="intro-panel">
           <div className="eyebrow">
             BETTER CONVERSATIONS
@@ -304,8 +360,6 @@ export default function App() {
           </div>
         </aside>
 
-        {/* INPUT */}
-
         <section className="panel thought-panel">
           <div className="panel-top">
             <span>01 / YOUR THOUGHT</span>
@@ -341,7 +395,9 @@ export default function App() {
                 <button
                   key={sample}
                   onClick={() => useSample(sample)}
-                  className={message === sample ? "active-sample" : ""}
+                  className={
+                    message === sample ? "active-sample" : ""
+                  }
                 >
                   <span>{sample}</span>
                   <b>→</b>
@@ -355,8 +411,6 @@ export default function App() {
             <span>SHIFT + ENTER</span>
           </div>
         </section>
-
-        {/* TONE FIELD */}
 
         <section className="panel tone-panel">
           <div className="panel-top">
@@ -373,7 +427,9 @@ export default function App() {
 
             <div
               ref={toneFieldRef}
-              className={`tone-field ${dragging ? "dragging" : ""}`}
+              className={`tone-field ${
+                dragging ? "dragging" : ""
+              }`}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
@@ -418,20 +474,20 @@ export default function App() {
             <div className="selected-tone">
               <div>
                 <span>SELECTED TONE</span>
-                <small>{toneData[tone].tag}</small>
+                <small>
+                  {getStrengthLabel()} · {toneStrength}% STRENGTH
+                </small>
               </div>
 
               <strong>{toneData[tone].label}</strong>
             </div>
 
             <p className="tone-hint">
-              Move through the field — every position creates a different
-              communication style.
+              Move farther from the center to increase the strength
+              of the selected communication style.
             </p>
           </div>
         </section>
-
-        {/* OUTPUT */}
 
         <section className="panel output-panel">
           <div className="panel-top">
@@ -439,7 +495,11 @@ export default function App() {
 
             <span className="ai-ready">
               <i />
-              {loading ? "SHAPING..." : aiOnline ? "AI READY" : "AI OFFLINE"}
+              {loading
+                ? "SHAPING..."
+                : aiOnline
+                ? "AI READY"
+                : "AI OFFLINE"}
             </span>
           </div>
 
@@ -498,17 +558,11 @@ export default function App() {
             </span>
 
             <b>
-              {loading
-                ? "..."
-                : !aiOnline
-                ? "!"
-                : "↗"}
+              {loading ? "..." : !aiOnline ? "!" : "↗"}
             </b>
           </button>
         </section>
       </main>
-
-      {/* NEW: TONE HISTORY */}
 
       <section className="history-section">
         <div className="history-header">
@@ -533,9 +587,7 @@ export default function App() {
         {history.length === 0 ? (
           <div className="empty-history">
             <span>✦</span>
-            <p>
-              Your tone transformations will appear here.
-            </p>
+            <p>Your tone transformations will appear here.</p>
           </div>
         ) : (
           <div className="history-list">
@@ -546,7 +598,9 @@ export default function App() {
                 onClick={() => loadHistoryItem(item)}
               >
                 <div className="history-item-top">
-                  <span>{item.tone.toUpperCase()}</span>
+                  <span>
+                    {item.tone.toUpperCase()} · {item.strength}%
+                  </span>
                   <small>VIEW →</small>
                 </div>
 
